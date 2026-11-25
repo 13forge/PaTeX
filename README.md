@@ -65,7 +65,7 @@ cargo test
 │.........│.........│.........│
 │.........│.........│.........│
 │.........│.........│.........│
-├────..───┴───..────┴───..────┤
+├────+────┴────+────┴────+────┤
 │.............................│
 │.............................│
 │.............................│
@@ -74,7 +74,7 @@ cargo test
 │...................▓▓▓▓▓▓▓▓▓▓│
 │.............................│
 │.............................│
-└──────..─────────────────────┘
+└──────+──────────────────────┘
 ```
 
 | default (`examples/two_bedroom.png`) | `--style blueprint --tile 24 --elev 12` (`examples/two_bedroom_blueprint.png`) |
@@ -86,20 +86,100 @@ cargo test
 | glyph | meaning | drawn as |
 |---|---|---|
 | `┌ ─ ┐ │ └ ┘ ├ ┤ ┬ ┴ ┼` and doubles `╔ ═ ╗ ║ …` (all 44) | wall | block, 3 units tall |
+| `+` | door | flat tile, set in a wall line |
 | `.` | floor | flat tile |
 | `░ ▒ ▓ █` | fill (counter, furniture, rock) | block, height by density (`▓` = 1, `█` = 2) |
 | `◆ @ ~ #` | marks | flat tile |
 | space, letters, `[ ]` | nothing / labels | left empty |
 
-A doorway is a `.` placed in a wall line. Rows may be up to 71 columns and 48 rows. A `.ptex` file works too: only its `\topology{ … }` body is read.
+Rows may be up to 71 columns and 48 rows. A `.ptex` file works too: only its `\topology{ … }` body is read.
+
+### Rules: sockets
+
+The renderer draws whatever it is given, so a hole in a wall or a room with no door would still look real. `check` and `fix` stop that.
+
+Every wall glyph has a **socket** on each edge (north, east, south, west). `┬` has sockets east, south and west. A socket must land on another wall or on a door (`+`). From that one rule:
+
+| issue | meaning |
+|---|---|
+| broken wall | a socket points at floor, space or the sheet edge |
+| stray door | a `+` with no wall on both sides of it |
+| open to the outside | a room's floor reaches the edge of the plan: a wall or door is missing |
+| no door path | a closed room with no chain of doors to the outside |
+
+```bash
+./target/release/patex check examples/broken.txt
+```
+
+```text
+  row 0 col 10: broken wall, its N side connects to nothing
+  row 5 col 4: broken wall, its E side connects to nothing
+  ...
+  row 1 col 1: room is open to the outside (missing wall or door)
+  row 1 col 11: room of 36 cells has no door path to the outside
+invalid: 9 issue(s), 1 room(s)
+```
+
+`fix` repairs what it can: a gap of up to 4 cells between two wall sockets becomes a door, every wall glyph is redrawn to match its neighbours, and each sealed room gets a door in the middle of its longest wall shared with a reachable room.
+
+```bash
+./target/release/patex fix examples/broken.txt -o fixed.txt
+```
+
+```text
+fixed: 3 gap(s) bridged, 1 wall glyph(s) redrawn, 1 door(s) added
+valid: 4 room(s)
+```
+
+`check` exits 0 for a valid plan and 1 otherwise, so it can score generated plans directly (valid-output rate). `render --fix` repairs in memory before drawing.
+
+### Building: drop a piece at the cursor
+
+`drop` places a piece centred on a cell, the way an editor drops one at the mouse. The piece slides up to 2 cells to share walls with what is already there (no double-thick walls), then the socket rules redraw the walls and cut the doors. The plan is valid after every drop.
+
+```bash
+printf '' | ./target/release/patex drop - --room 8x5 --at 4,6 -o plan.txt
+```
+
+```bash
+./target/release/patex drop plan.txt --room 7x5 --at 4,14 -o plan.txt
+```
+
+```bash
+./target/release/patex drop plan.txt --fill 3x1 --at 3,6 -o plan.txt
+```
+
+```text
+   ┌───+──┬─────┐
+   │.▓▓▓..│.....│
+   │......+.....│
+   │......│.....│
+   └──────┴─────┘
+```
+
+`gen` builds a random plan the same way, with rooms dropped at seeded cursor positions. The same seed always gives the same plan (`examples/gen_seed7.txt`).
+
+```bash
+./target/release/patex gen --seed 7 --rooms 5 -o plan.txt
+```
+
+### Editor (works offline)
+
+`web/editor.html` is a single file with no dependencies: open it in any browser, online or off. Pick a piece and click the grid. The ghost shows where the piece will snap before you click, the isometric view updates live, and the rule check lists any issue (click one to see it on the plan). You can paste a plan, for example an LLM's output, into the text box; it is checked as you type. "Fix plan" runs the same repair as `patex fix`.
+
+Its logic is a line-for-line port of this crate. `node web/parity.mjs` checks it against the golden files above (same fixes, same generated plans, same pixels).
 
 ### Options
 
 ```text
-patex <plan.txt | -> [-o out.png] [--tile N] [--elev N] [--pad N] [--style canonical|blueprint]
+patex render <plan> [-o out.png] [--fix] [--tile N] [--elev N] [--pad N] [--style canonical|blueprint]
+patex check  <plan>
+patex fix    <plan> [-o fixed.txt]
+patex drop   <plan> --at ROW,COL (--room WxH | --fill WxH [--glyph C]) [--cols N --rows N] [-o out.txt]
+patex gen    [--seed N] [--cols N] [--rows N] [--rooms N] [-o plan.txt]
 ```
 
-`-` reads the plan from stdin, so an LLM's output can be piped straight in. The stats line on stderr reports `unbound` glyphs: a non-zero count means the plan contains characters outside the grammar above. That is a quick validity check for generated plans.
+`<plan>` may be `-` to read stdin, so an LLM's output can be piped straight in.
 
 ### As a library
 
@@ -107,6 +187,11 @@ patex <plan.txt | -> [-o out.png] [--tile N] [--elev N] [--pad N] [--style canon
 let (plan, stats) = patex::Plan::parse(text);
 let (image, _) = patex::render(&plan, &patex::Options::default());
 std::fs::write("out.png", patex::encode_png(&image))?;
+
+let mut grid = patex::Grid::parse(text);
+let report = patex::check(&grid);          // report.is_valid(), report.issues
+patex::fix(&mut grid);                     // gaps -> doors, walls redrawn, doors cut
+patex::drop_at(&mut grid, patex::Piece::Room { w: 8, h: 5 }, row, col); // at the cursor
 ```
 
 ---

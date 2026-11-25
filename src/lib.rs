@@ -7,9 +7,13 @@
 //!
 //! Spec: `06_PATEX_5D_GEOMETRIC_TYPESETTING.md` §5 (axonometry) in this repo.
 
+pub mod builder;
 mod png;
+pub mod sockets;
 
+pub use builder::{drop_at, generate, GenOptions, Piece};
 pub use png::encode_png;
+pub use sockets::{check, fix, Grid, Issue, Report};
 
 /// Pane width ceiling (spec: 71-column viewport).
 pub const MAX_COLS: usize = 71;
@@ -25,9 +29,6 @@ pub const RISE: i64 = 1;
 const SUB: i64 = 3;
 const DEN: u32 = (SUB * SUB) as u32;
 
-/// The 44 single / double / mixed box-drawing glyphs (spec §3).
-pub const BOX_GLYPHS: &str = "─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬╒╓╕╖╘╙╛╜╞╟╡╢╤╥╧╨╪╫╵╶╷╴";
-
 /// Which lane a glyph lives on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lane {
@@ -37,6 +38,8 @@ pub enum Lane {
     Material,
     /// Flat marks: `. ◆ @ ~ #`.
     Mark,
+    /// Doors: `+`, flat, set in a wall line.
+    Door,
 }
 
 /// One bound cell of a plan.
@@ -50,8 +53,17 @@ pub struct Cell {
 
 /// The cell a glyph binds to, or `None` (space, letters, brackets: not drawn).
 pub fn classify(ch: char) -> Option<Cell> {
-    if BOX_GLYPHS.contains(ch) {
-        return Some(Cell { lane: Lane::Topology, density_pmy: 10_000 });
+    if ch == sockets::DOOR {
+        return Some(Cell {
+            lane: Lane::Door,
+            density_pmy: 0,
+        });
+    }
+    if sockets::wall_sockets(ch).is_some() {
+        return Some(Cell {
+            lane: Lane::Topology,
+            density_pmy: 10_000,
+        });
     }
     let material = match ch {
         '·' => Some(0),
@@ -62,10 +74,16 @@ pub fn classify(ch: char) -> Option<Cell> {
         _ => None,
     };
     if let Some(d) = material {
-        return Some(Cell { lane: Lane::Material, density_pmy: d });
+        return Some(Cell {
+            lane: Lane::Material,
+            density_pmy: d,
+        });
     }
     match ch {
-        '.' | '◆' | '@' | '~' | '#' => Some(Cell { lane: Lane::Mark, density_pmy: 0 }),
+        '.' | '◆' | '@' | '~' | '#' => Some(Cell {
+            lane: Lane::Mark,
+            density_pmy: 0,
+        }),
         _ => None,
     }
 }
@@ -134,11 +152,15 @@ impl Plan {
 
     /// The cell at `(col, row)`, if bound.
     pub fn cell(&self, col: usize, row: usize) -> Option<Cell> {
-        self.cells.get(row).and_then(|r| r.get(col)).copied().flatten()
+        self.cells
+            .get(row)
+            .and_then(|r| r.get(col))
+            .copied()
+            .flatten()
     }
 }
 
-fn body_lines(src: &str) -> Vec<&str> {
+pub(crate) fn body_lines(src: &str) -> Vec<&str> {
     let mut lines = src.lines();
     if src.contains("\\topology{") {
         let mut out = Vec::new();
@@ -171,13 +193,17 @@ pub struct Extrude {
 
 impl Extrude {
     /// Walls stand 3, floor lies flat, fills rise with density.
-    pub const CANONICAL: Self = Self { topology: 3, mark: 0, material: 2 };
+    pub const CANONICAL: Self = Self {
+        topology: 3,
+        mark: 0,
+        material: 2,
+    };
 
     /// Height of one cell.
     pub fn height_of(&self, c: Cell) -> u8 {
         match c.lane {
             Lane::Topology => self.topology,
-            Lane::Mark => self.mark,
+            Lane::Mark | Lane::Door => self.mark,
             Lane::Material => ((self.material as u32 * c.density_pmy as u32) / 10_000) as u8,
         }
     }
@@ -197,6 +223,8 @@ pub struct Palette {
     pub material: [u8; 3],
     /// Floor / mark ink.
     pub mark: [u8; 3],
+    /// Door ink.
+    pub door: [u8; 3],
     /// Sheet background.
     pub background: [u8; 3],
 }
@@ -207,6 +235,7 @@ impl Palette {
         topology: [92, 132, 196],
         material: [120, 104, 92],
         mark: [214, 160, 104],
+        door: [236, 214, 120],
         background: [18, 20, 26],
     };
 
@@ -215,6 +244,7 @@ impl Palette {
         topology: [226, 240, 255],
         material: [150, 200, 240],
         mark: [42, 92, 168],
+        door: [255, 214, 92],
         background: [16, 58, 120],
     };
 
@@ -232,6 +262,7 @@ impl Palette {
             Lane::Topology => self.topology,
             Lane::Material => self.material,
             Lane::Mark => self.mark,
+            Lane::Door => self.door,
         }
     }
 }
@@ -278,7 +309,13 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { tile_w: 16, elev: 8, pad: 8, extrude: Extrude::CANONICAL, palette: Palette::CANONICAL }
+        Self {
+            tile_w: 16,
+            elev: 8,
+            pad: 8,
+            extrude: Extrude::CANONICAL,
+            palette: Palette::CANONICAL,
+        }
     }
 }
 
@@ -314,9 +351,24 @@ fn corner(cx: i64, cz: i64, cy: i64, origin: (i64, i64), tile_w: i64, elev: i64)
 
 fn face_corners(face: Face, col: i64, row: i64, h: i64) -> [(i64, i64, i64); 4] {
     match face {
-        Face::Top => [(col, row, h), (col + 1, row, h), (col + 1, row + 1, h), (col, row + 1, h)],
-        Face::Right => [(col + 1, row, h), (col + 1, row + 1, h), (col + 1, row + 1, 0), (col + 1, row, 0)],
-        Face::Left => [(col, row + 1, h), (col + 1, row + 1, h), (col + 1, row + 1, 0), (col, row + 1, 0)],
+        Face::Top => [
+            (col, row, h),
+            (col + 1, row, h),
+            (col + 1, row + 1, h),
+            (col, row + 1, h),
+        ],
+        Face::Right => [
+            (col + 1, row, h),
+            (col + 1, row + 1, h),
+            (col + 1, row + 1, 0),
+            (col + 1, row, 0),
+        ],
+        Face::Left => [
+            (col, row + 1, h),
+            (col + 1, row + 1, h),
+            (col + 1, row + 1, 0),
+            (col, row + 1, 0),
+        ],
     }
 }
 
@@ -344,7 +396,11 @@ pub fn render(plan: &Plan, opt: &Options) -> (Image, RenderStats) {
     let origin = (rows * half_w + opt.pad, lift + opt.pad);
 
     let bg = opt.palette.background;
-    let mut img = Image { width, height, data: Vec::with_capacity((width * height * 4) as usize) };
+    let mut img = Image {
+        width,
+        height,
+        data: Vec::with_capacity((width * height * 4) as usize),
+    };
     for _ in 0..width * height {
         img.data.extend_from_slice(&[bg[0], bg[1], bg[2], 255]);
     }
