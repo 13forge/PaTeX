@@ -1,0 +1,17 @@
+[package]
+name = "patex"
+version = "0.1.0"
+edition = "2021"
+description = "PaTeX isometric renderer: box-drawing ASCII floor plans to a 2:1 dimetric PNG. Zero dependencies, integer only, deterministic."
+license = "Apache-2.0"
+repository = "https://github.com/13forge/PaTeX"
+readme = "README.md"
+keywords = ["ascii", "isometric", "floor-plan", "renderer", "box-drawing"]
+categories = ["rendering", "command-line-utilities"]
+exclude = ["patex.png", "examples/*.png"]
+
+[dependencies]
+
+[[bin]]
+name = "patex"
+path = "src/main.rs"
