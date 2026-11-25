@@ -19,6 +19,98 @@ $$\mathcal{P}: M^5 \longleftrightarrow \Sigma^{71 \times 48}$$
 
 ---
 
+## Render a Plan (Run Guide)
+
+PaTeX ships a small renderer: a box-drawing ASCII plan in, a 2:1 isometric PNG out. It has zero dependencies and uses only integer math, so the same plan always gives the same image.
+
+**1. Install Rust** (once): https://rustup.rs
+
+**2. Get the renderer**
+
+```bash
+git clone https://github.com/13forge/PaTeX && cd PaTeX
+```
+
+```bash
+cargo build --release
+```
+
+**3. Render the example**
+
+```bash
+./target/release/patex examples/two_bedroom.txt -o out.png
+```
+
+For the blueprint look:
+
+```bash
+./target/release/patex examples/two_bedroom.txt --style blueprint --tile 24 --elev 12 -o blueprint.png
+```
+
+On Windows the binary is `target\release\patex.exe`.
+
+**4. Check your build matches ours** (renders both examples and compares them byte for byte with the PNGs in `examples/`)
+
+```bash
+cargo test
+```
+
+### Example: input and expected output
+
+`examples/two_bedroom.txt` (31×15):
+
+```text
+┌─────────┬─────────┬─────────┐
+│.........│.........│.........│
+│.........│.........│.........│
+│.........│.........│.........│
+│.........│.........│.........│
+├────..───┴───..────┴───..────┤
+│.............................│
+│.............................│
+│.............................│
+│...................▓▓▓▓▓▓▓▓..│
+│.............................│
+│...................▓▓▓▓▓▓▓▓▓▓│
+│.............................│
+│.............................│
+└──────..─────────────────────┘
+```
+
+| default (`examples/two_bedroom.png`) | `--style blueprint --tile 24 --elev 12` (`examples/two_bedroom_blueprint.png`) |
+|---|---|
+| ![two bedroom, default](examples/two_bedroom.png) | ![two bedroom, blueprint](examples/two_bedroom_blueprint.png) |
+
+### Plan glyphs
+
+| glyph | meaning | drawn as |
+|---|---|---|
+| `┌ ─ ┐ │ └ ┘ ├ ┤ ┬ ┴ ┼` and doubles `╔ ═ ╗ ║ …` (all 44) | wall | block, 3 units tall |
+| `.` | floor | flat tile |
+| `░ ▒ ▓ █` | fill (counter, furniture, rock) | block, height by density (`▓` = 1, `█` = 2) |
+| `◆ @ ~ #` | marks | flat tile |
+| space, letters, `[ ]` | nothing / labels | left empty |
+
+A doorway is a `.` placed in a wall line. Rows may be up to 71 columns and 48 rows. A `.ptex` file works too: only its `\topology{ … }` body is read.
+
+### Options
+
+```text
+patex <plan.txt | -> [-o out.png] [--tile N] [--elev N] [--pad N] [--style canonical|blueprint]
+```
+
+`-` reads the plan from stdin, so an LLM's output can be piped straight in. The stats line on stderr reports `unbound` glyphs: a non-zero count means the plan contains characters outside the grammar above. That is a quick validity check for generated plans.
+
+### As a library
+
+```rust
+let (plan, stats) = patex::Plan::parse(text);
+let (image, _) = patex::render(&plan, &patex::Options::default());
+std::fs::write("out.png", patex::encode_png(&image))?;
+```
+
+---
+
 ## Key Features
 
 - **5-Dimensional Manifold ($M^5$):** Unifies spatial coordinates $(x, y, z)$, temporal causality phases $(t)$, and semantic functional lanes $(s)$ in a single balanced ternary tensor $\mathbf{p} \in \{-1, 0, +1\}^5$.
@@ -102,12 +194,16 @@ If you use PaTeX in your research or software, please cite:
   year    = {2026},
   journal = {Technical Whitepaper Series},
   volume  = {6},
-  url     = {https://github.com/your-username/patex}
+  url     = {https://github.com/13forge/PaTeX}
 }
 ```
+
+If you use the renderer in a project, a one-line credit is enough:
+
+> Isometric rendering by PaTeX (13Forge), https://github.com/13forge/PaTeX, Apache-2.0.
 
 ---
 
 ## License
 
-MIT or Apache-2.0.
+Apache-2.0 (see `LICENSE`).
