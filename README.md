@@ -163,6 +163,12 @@ printf '' | ./target/release/patex drop - --room 8x5 --at 4,6 -o plan.txt
 ./target/release/patex gen --seed 7 --rooms 5 -o plan.txt
 ```
 
+### Editor (works offline)
+
+`web/editor.html` is a single file with no dependencies: open it in any browser, online or off. Pick a piece and click the grid. The ghost shows where the piece will snap before you click, the isometric view updates live, and the rule check lists any issue (click one to see it on the plan). You can paste a plan, for example an LLM's output, into the text box; it is checked as you type. "Fix plan" runs the same repair as `patex fix`.
+
+Its logic is a line-for-line port of this crate. `node web/parity.mjs` checks it against the golden files above (same fixes, same generated plans, same pixels).
+
 ### Options
 
 ```text

@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PaTeX Plan Editor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a drafting table. Tools at the left, the plan sheet in the middle, the
+   isometric view and the rule check at the right; one column on a phone. */
+:root {
+  --paper: #eef2f7;      /* table */
+  --sheet: #ffffff;      /* drawing sheet */
+  --ink: #15233b;        /* walls, text */
+  --muted: #5d6c84;      /* labels, floor dots */
+  --rule: #d3dbe6;       /* grid, borders */
+  --accent: #1d5cc4;     /* blueprint blue: doors, ghost, focus */
+  --warn: #c0392b;       /* red pencil: issues */
+  --ok: #2b7a4b;         /* valid */
+  --fill: #7a6a5c;       /* counters, pillars */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-plan: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0a1628; --sheet: #0f2240; --ink: #dce8f8; --muted: #8ea3c2; --rule: #213a60;
+    --accent: #7db6ff; --warn: #ff8466; --ok: #5ccf88; --fill: #c4ad97; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0a1628; --sheet: #0f2240; --ink: #dce8f8; --muted: #8ea3c2; --rule: #213a60;
+  --accent: #7db6ff; --warn: #ff8466; --ok: #5ccf88; --fill: #c4ad97; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper); color: var(--ink); font: 14px/1.45 var(--font-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px 24px;
+}
+button, input, select, textarea { font: inherit; color: var(--ink); }
+button, select, input[type=number] {
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 5px 10px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--sheet); font-weight: 600; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=number] { width: 4.2em; padding: 4px 6px; font-variant-numeric: tabular-nums; }
+
+header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+header h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 2px 0 0; color: var(--muted); }
+.bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.bar label { color: var(--muted); font-size: 12px; }
+
+main { display: grid; grid-template-columns: 190px minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1000px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+section { min-width: 0; }
+h2 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+.sheet { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 12px; }
+
+#tools { display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 1000px) { #tools { flex-direction: row; flex-wrap: wrap; } #tools h2 { width: 100%; } }
+.tool { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); cursor: pointer; user-select: none; }
+.tool input[type=radio] { margin: 0; accent-color: var(--accent); }
+.tool:has(input:checked) { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.tool .g { font-family: var(--font-plan); width: 1.4em; text-align: center; }
+.tool .sz { margin-left: auto; display: flex; gap: 3px; align-items: center; color: var(--muted); font-size: 12px; }
+.tool .sz input { width: 3em; }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+kbd { font-family: var(--font-plan); font-size: 11px; border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; }
+
+#planWrap { position: relative; }
+canvas { display: block; max-width: 100%; touch-action: none; }
+#plan { cursor: crosshair; }
+.status { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; min-height: 1.5em; }
+.status b { color: var(--ink); font-weight: 600; }
+
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+.pill.ok { color: var(--ok); border: 1px solid var(--ok); }
+.pill.bad { color: var(--warn); border: 1px solid var(--warn); }
+#issues { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow: auto; }
+#issues button { width: 100%; text-align: left; border: 0; border-left: 3px solid var(--warn); border-radius: 0; background: transparent; padding: 3px 8px; font-size: 12.5px; }
+#issues button:hover { background: var(--paper); }
+.right { display: flex; flex-direction: column; gap: 14px; }
+#iso { image-rendering: pixelated; border-radius: 4px; }
+textarea { width: 100%; min-height: 220px; resize: vertical; font: 13px/1.15 var(--font-plan); background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 8px; white-space: pre; overflow: auto; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>PaTeX Plan Editor</h1>
+    <p>Click to drop a room. Walls redraw, doors cut themselves, and every drop stays valid.</p>
+  </div>
+  <div class="bar">
+    <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
+    <button id="fixBtn" class="primary" title="Bridge gaps, redraw walls, cut doors">Fix plan</button>
+    <label for="seed">seed</label><input id="seed" type="number" min="0" value="7">
+    <button id="gen">Random plan</button>
+    <label for="cols">sheet</label><input id="cols" type="number" min="8" max="71" value="31"><span>×</span><input id="rows" type="number" min="6" max="48" value="15">
+    <button id="clear">Clear</button>
+  </div>
+</header>
+
+<main>
+  <section id="tools" aria-label="Pieces">
+    <h2>Pieces</h2>
+    <label class="tool"><input type="radio" name="tool" value="room" checked><span class="g">┌┐</span>Room
+      <span class="sz"><input id="roomW" type="number" min="3" max="71" value="8" aria-label="Room width">×<input id="roomH" type="number" min="3" max="48" value="5" aria-label="Room height"></span></label>
+    <label class="tool"><input type="radio" name="tool" value="counter"><span class="g">▓</span>Counter
+      <span class="sz"><input id="fillW" type="number" min="1" max="71" value="3" aria-label="Counter width">×<input id="fillH" type="number" min="1" max="48" value="1" aria-label="Counter height"></span></label>
+    <label class="tool"><input type="radio" name="tool" value="pillar"><span class="g">█</span>Pillar</label>
+    <label class="tool"><input type="radio" name="tool" value="anchor"><span class="g">@</span>Spawn mark</label>
+    <label class="tool"><input type="radio" name="tool" value="door"><span class="g">+</span>Door (click a wall)</label>
+    <label class="tool"><input type="radio" name="tool" value="erase"><span class="g">⌫</span>Erase cell</label>
+    <p class="hint"><kbd>R</kbd> turns the room · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</p>
+  </section>
+
+  <section>
+    <h2>Plan</h2>
+    <div class="sheet" id="planWrap"><canvas id="plan" aria-label="Plan grid: click a cell to drop the selected piece"></canvas></div>
+    <div class="status" id="status"></div>
+  </section>
+
+  <div class="right">
+    <section>
+      <div class="row"><h2 style="margin:0">Isometric</h2>
+        <div class="bar"><label for="style">style</label><select id="style"><option value="blueprint">blueprint</option><option value="canonical">canonical</option></select>
+        <button id="png" hidden>Save PNG</button></div></div>
+      <div class="sheet"><canvas id="iso" aria-label="Isometric view of the plan"></canvas></div>
+    </section>
+    <section>
+      <div class="row"><h2 style="margin:0">Rule check</h2><span id="verdict"></span></div>
+      <ul id="issues"></ul>
+    </section>
+    <section>
+      <div class="row"><h2 style="margin:0">Plan text</h2>
+        <div class="bar"><button id="copy">Copy</button></div></div>
+      <textarea id="text" spellcheck="false" aria-label="Plan as text; paste a plan here"></textarea>
+      <p class="hint">Paste any plan (an LLM's output works). It is checked as you type.</p>
+    </section>
+  </div>
+</main>
+
+<script>
+/* CORE-BEGIN: pure logic, a line-for-line port of the patex Rust crate.
+   web/parity.mjs runs it against the crate's golden files. */
+const P = (() => {
+  const MAX_COLS = 71, MAX_ROWS = 48, DOOR = '+', MAX_GAP = 4, SNAP = 2;
+  const WALLS = [['─',[0,1,0,1]],['│',[1,0,1,0]],['┌',[0,1,1,0]],['┐',[0,0,1,1]],['└',[1,1,0,0]],['┘',[1,0,0,1]],
+    ['├',[1,1,1,0]],['┤',[1,0,1,1]],['┬',[0,1,1,1]],['┴',[1,1,0,1]],['┼',[1,1,1,1]],['═',[0,2,0,2]],['║',[2,0,2,0]],
+    ['╔',[0,2,2,0]],['╗',[0,0,2,2]],['╚',[2,2,0,0]],['╝',[2,0,0,2]],['╠',[2,2,2,0]],['╣',[2,0,2,2]],['╦',[0,2,2,2]],
+    ['╩',[2,2,0,2]],['╬',[2,2,2,2]],['╒',[0,2,1,0]],['╓',[0,1,2,0]],['╕',[0,0,1,2]],['╖',[0,0,2,1]],['╘',[1,2,0,0]],
+    ['╙',[2,1,0,0]],['╛',[1,0,0,2]],['╜',[2,0,0,1]],['╞',[1,2,1,0]],['╟',[2,1,2,0]],['╡',[1,0,1,2]],['╢',[2,0,2,1]],
+    ['╤',[0,2,1,2]],['╥',[0,1,2,1]],['╧',[1,2,0,2]],['╨',[2,1,0,1]],['╪',[1,2,1,2]],['╫',[2,1,2,1]],['╵',[1,0,0,0]],
+    ['╶',[0,1,0,0]],['╷',[0,0,1,0]],['╴',[0,0,0,1]]];
+  const SOCK = new Map(WALLS), GLY = new Map(WALLS.map(([c, s]) => [s.join(''), c]));
+  const STEP = [[-1, 0], [0, 1], [1, 0], [0, -1]], OPP = [2, 3, 0, 1], SIDE = 'NESW';
+  const wallSockets = ch => SOCK.get(ch);
+  const wallGlyph = s => GLY.get(s.join(''));
+  const kindOf = ch => ch === DOOR ? 'D' : SOCK.has(ch) ? 'W' : 'O';
+  const isWs = ch => /\s/.test(ch);
+
+  function lines(src) {
+    const ls = src.split('\n');
+    if (ls.length && ls[ls.length - 1] === '') ls.pop();
+    return ls.map(l => l.endsWith('\r') ? l.slice(0, -1) : l);
+  }
+  function bodyLines(src) {
+    const ls = lines(src);
+    if (!src.includes('\\topology{')) return ls;
+    const out = []; let i = 0;
+    while (i < ls.length && !ls[i].includes('\\topology{')) i++;
+    for (i++; i < ls.length; i++) { if (ls[i].trim() === '}') break; out.push(ls[i]); }
+    return out;
+  }
+
+  class Grid {
+    constructor(cells) {
+      this.cells = cells;
+      this.cols = cells.reduce((m, r) => Math.max(m, r.length), 0);
+      for (const r of cells) while (r.length < this.cols) r.push(' ');
+    }
+    static parse(src) { return new Grid(bodyLines(src).slice(0, MAX_ROWS).map(l => [...l].slice(0, MAX_COLS))); }
+    static blank(cols, rows) { const g = new Grid(Array.from({ length: rows }, () => Array(cols).fill(' '))); g.cols = cols; return g; }
+    get rows() { return this.cells.length; }
+    clone() { const g = new Grid(this.cells.map(r => r.slice())); g.cols = this.cols; return g; }
+    get(r, c) { return this.cells[r][c]; }
+    set(r, c, ch) { this.cells[r][c] = ch; }
+    at(r, c) { return (r < 0 || c < 0 || r >= this.rows || c >= this.cols) ? undefined : this.cells[r][c]; }
+    kind(r, c) { const ch = this.at(r, c); return ch === undefined ? undefined : kindOf(ch); }
+    solid(r, c) { const k = this.kind(r, c); return k === 'W' || k === 'D'; }
+    sockets(r, c) { const ch = this.at(r, c); return (ch !== undefined && SOCK.get(ch)) || [0, 0, 0, 0]; }
+    positions(want) { const out = []; this.cells.forEach((row, r) => row.forEach((ch, c) => { if (want(kindOf(ch))) out.push([r, c]); })); return out; }
+    walls() { return this.positions(k => k === 'W'); }
+    toText() { return this.cells.map(r => r.join('').trimEnd() + '\n').join(''); }
+    grow(cols, rows) {
+      this.cols = Math.max(this.cols, Math.min(cols, MAX_COLS));
+      const n = Math.max(this.rows, Math.min(rows, MAX_ROWS));
+      while (this.cells.length < n) this.cells.push([]);
+      for (const r of this.cells) while (r.length < this.cols) r.push(' ');
+    }
+  }
+
+  function regions(g) {
+    const id = g.cells.map(r => r.map(() => -1));
+    const outside = [], interior = [], first = [];
+    for (const [r0, c0] of g.positions(k => k === 'O')) {
+      if (id[r0][c0] !== -1) continue;
+      const n = outside.length;
+      outside.push(false); interior.push(0); first.push([r0, c0]);
+      let firstSet = false; const q = [[r0, c0]]; let qi = 0; id[r0][c0] = n;
+      while (qi < q.length) {
+        const [r, c] = q[qi++];
+        if (!isWs(g.cells[r][c])) { interior[n]++; if (!firstSet) { first[n] = [r, c]; firstSet = true; } }
+        for (const [dr, dc] of STEP) {
+          const nr = r + dr, nc = c + dc, k = g.kind(nr, nc);
+          if (k === undefined) outside[n] = true;
+          else if (k === 'O' && id[nr][nc] === -1) { id[nr][nc] = n; q.push([nr, nc]); }
+        }
+      }
+    }
+    const len = outside.length;
+    return {
+      id, outside, interior, first, len,
+      node(r, c) { const k = g.kind(r, c); if (k === undefined) return len; if (k === 'O') { const i = id[r][c]; return outside[i] ? len : i; } return null; },
+      isRoom(i) { return !outside[i] && interior[i] > 0; },
+    };
+  }
+
+  function across(g, r, c) {
+    if (g.solid(r, c - 1) && g.solid(r, c + 1)) return [[r - 1, c], [r + 1, c]];
+    if (g.solid(r - 1, c) && g.solid(r + 1, c)) return [[r, c - 1], [r, c + 1]];
+    return null;
+  }
+
+  function reached(g, rg) {
+    const n = rg.len, adj = Array.from({ length: n + 1 }, () => []);
+    for (const [r, c] of g.positions(k => k === 'D')) {
+      const ac = across(g, r, c); if (!ac) continue;
+      const x = rg.node(...ac[0]), y = rg.node(...ac[1]);
+      if (x !== null && y !== null) { adj[x].push(y); adj[y].push(x); }
+    }
+    const seen = Array(n + 1).fill(false); seen[n] = true;
+    const q = [n]; let qi = 0;
+    while (qi < q.length) { const x = q[qi++]; for (const y of adj[x]) if (!seen[y]) { seen[y] = true; q.push(y); } }
+    return seen;
+  }
+
+  function issueText(i) {
+    switch (i.kind) {
+      case 'broken': return `row ${i.row} col ${i.col}: broken wall, its ${i.side} side connects to nothing`;
+      case 'stray': return `row ${i.row} col ${i.col}: door is not set in a wall`;
+      case 'leak': return `row ${i.row} col ${i.col}: room is open to the outside (missing wall or door)`;
+      default: return `row ${i.row} col ${i.col}: room of ${i.cells} cells has no door path to the outside`;
+    }
+  }
+
+  function check(g) {
+    const issues = [];
+    for (const [r, c] of g.walls()) {
+      const s = g.sockets(r, c);
+      for (let d = 0; d < 4; d++) {
+        if (s[d] === 0) continue;
+        const nr = r + STEP[d][0], nc = c + STEP[d][1], k = g.kind(nr, nc);
+        const ok = k === 'D' || (k === 'W' && g.sockets(nr, nc)[OPP[d]] > 0);
+        if (!ok) issues.push({ kind: 'broken', row: r, col: c, side: SIDE[d] });
+      }
+    }
+    for (const [r, c] of g.positions(k => k === 'D')) if (!across(g, r, c)) issues.push({ kind: 'stray', row: r, col: c });
+    const rg = regions(g), seen = reached(g, rg);
+    let rooms = 0;
+    for (let i = 0; i < rg.len; i++) {
+      const [row, col] = rg.first[i];
+      if (rg.outside[i] && rg.interior[i] > 0) issues.push({ kind: 'leak', row, col });
+      else if (rg.isRoom(i)) { rooms++; if (!seen[i]) issues.push({ kind: 'sealed', row, col, cells: rg.interior[i] }); }
+    }
+    for (const i of issues) i.text = issueText(i);
+    return { issues, rooms, valid: issues.length === 0 };
+  }
+
+  function bridgeGaps(g) {
+    let closed = 0;
+    for (const [r, c] of g.walls()) {
+      for (const [d, fs, fd] of [[1, '─', '═'], [2, '│', '║']]) {
+        const weight = g.sockets(r, c)[d]; if (weight === 0) continue;
+        const [dr, dc] = STEP[d]; let len = 0;
+        while (len < MAX_GAP && g.kind(r + dr * (len + 1), c + dc * (len + 1)) === 'O') len++;
+        const er = r + dr * (len + 1), ec = c + dc * (len + 1);
+        if (len === 0 || g.kind(er, ec) !== 'W' || g.sockets(er, ec)[OPP[d]] === 0) continue;
+        const fill = weight === 2 ? fd : fs;
+        for (let k = 1; k <= len; k++) g.set(r + dr * k, c + dc * k, k === 1 + Math.floor((len - 1) / 2) ? DOOR : fill);
+        closed++;
+      }
+    }
+    return closed;
+  }
+
+  function autotile(g) {
+    let changed = 0;
+    for (const [r, c] of g.walls()) {
+      const weight = Math.max(1, ...g.sockets(r, c));
+      const on = STEP.map(([dr, dc]) => g.solid(r + dr, c + dc));
+      const glyph = wallGlyph(on.map(x => x ? weight : 0)) ?? wallGlyph(on.map(x => x ? 1 : 0));
+      if (glyph && glyph !== g.get(r, c)) { g.set(r, c, glyph); changed++; }
+    }
+    return changed;
+  }
+
+  function cmp(a, b) { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return 0; }
+
+  function middleOfLongestRun(keys) {
+    keys.sort(cmp);
+    let best = [], start = 0;
+    for (let i = 1; i <= keys.length; i++) {
+      const brk = i === keys.length || keys[i - 1][0] !== keys[i][0] || keys[i - 1][1] !== keys[i][1] || keys[i - 1][2] + 1 !== keys[i][2];
+      if (brk) { if (i - start > best.length) best = keys.slice(start, i); start = i; }
+    }
+    return best.length ? best[Math.floor(best.length / 2)] : null;
+  }
+
+  function addDoors(g) {
+    let added = 0;
+    for (let iter = 0; iter < MAX_COLS * MAX_ROWS; iter++) {
+      const rg = regions(g), seen = reached(g, rg);
+      let room = -1;
+      for (let i = 0; i < rg.len; i++) if (rg.isRoom(i) && !seen[i]) { room = i; break; }
+      if (room < 0) break;
+      const inner = [], outer = [];
+      for (const [r, c] of g.walls()) {
+        const ac = across(g, r, c); if (!ac) continue;
+        const [a, b] = ac, x = rg.node(...a), y = rg.node(...b);
+        if (x === null || y === null) continue;
+        const other = x === room ? y : y === room ? x : null;
+        if (other === null || !seen[other]) continue;
+        const key = a[1] === b[1] ? [0, r, c] : [1, c, r];
+        (other === rg.len ? outer : inner).push(key);
+      }
+      const best = middleOfLongestRun(inner.length ? inner : outer);
+      if (!best) break;
+      const [axis, line, pos] = best;
+      if (axis === 0) g.set(line, pos, DOOR); else g.set(pos, line, DOOR);
+      added++;
+    }
+    return added;
+  }
+
+  function fix(g) {
+    const gaps_bridged = bridgeGaps(g), walls_redrawn = autotile(g), doors_added = addDoors(g);
+    return { gaps_bridged, walls_redrawn, doors_added };
+  }
+
+  // ---- builder ----
+  function tile(g, r, c) {
+    const ch = g.at(r, c);
+    if (ch === undefined) return undefined;
+    return ch === ' ' ? 'E' : (ch === DOOR || SOCK.has(ch)) ? 'W' : 'F';
+  }
+  function roomFit(g, r0, c0, w, h) {
+    const inside = (r, c) => r >= r0 && r < r0 + h && c >= c0 && c < c0 + w;
+    let shared = 0;
+    for (let r = r0; r < r0 + h; r++) for (let c = c0; c < c0 + w; c++) {
+      const t = tile(g, r, c); if (t === undefined) return null;
+      const border = r === r0 || r === r0 + h - 1 || c === c0 || c === c0 + w - 1;
+      if (!border) { if (t !== 'E') return null; continue; }
+      if (t === 'F') return null;
+      if (t === 'W') { shared++; continue; }
+      for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (!inside(r + dr, c + dc) && tile(g, r + dr, c + dc) === 'W') return null;
+    }
+    return shared;
+  }
+  function fillFit(g, r0, c0, w, h) {
+    for (let r = r0; r < r0 + h; r++) for (let c = c0; c < c0 + w; c++) if (g.at(r, c) !== '.') return null;
+    return 0;
+  }
+  /** Find where `piece` would land for a cursor at (row, col); null if nowhere. */
+  function landing(g, piece, row, col) {
+    const { w, h } = piece, room = piece.kind === 'room';
+    if (w < 1 || h < 1 || (room && (w < 3 || h < 3))) return null;
+    const rAim = row - Math.trunc((h - 1) / 2), cAim = col - Math.trunc((w - 1) / 2);
+    let best = null;
+    for (let dr = -SNAP; dr <= SNAP; dr++) for (let dc = -SNAP; dc <= SNAP; dc++) {
+      const r0 = rAim + dr, c0 = cAim + dc;
+      const shared = room ? roomFit(g, r0, c0, w, h) : fillFit(g, r0, c0, w, h);
+      if (shared === null) continue;
+      const dist = Math.abs(dr) + Math.abs(dc);
+      if (!best || cmp([shared, -dist, -r0, -c0], [best.shared, -best.dist, -best.row, -best.col]) > 0) best = { shared, dist, row: r0, col: c0 };
+    }
+    return best && { row: best.row, col: best.col, shared: best.shared, aimRow: rAim, aimCol: cAim };
+  }
+  function dropAt(g, piece, row, col) {
+    const land = landing(g, piece, row, col);
+    if (!land) return null;
+    const { w, h } = piece, r0 = land.row, c0 = land.col;
+    for (let r = r0; r < r0 + h; r++) for (let c = c0; c < c0 + w; c++) {
+      if (piece.kind !== 'room') { g.set(r, c, piece.ch); continue; }
+      const border = r === r0 || r === r0 + h - 1 || c === c0 || c === c0 + w - 1;
+      if (!border) g.set(r, c, '.'); else if (tile(g, r, c) === 'E') g.set(r, c, '─');
+    }
+    const drawn = autotile(g), fixed = fix(g);
+    fixed.walls_redrawn += drawn;
+    return { row: r0, col: c0, shared: land.shared, fixed };
+  }
+
+  function rng(seed) {
+    const M = (1n << 64n) - 1n;
+    let s = (BigInt(seed) ^ 0x9E3779B97F4A7C15n) & M; if (s === 0n) s = 1n;
+    return (lo, hi) => {
+      let x = s; x ^= x >> 12n; x ^= (x << 25n) & M; x ^= x >> 27n; s = x;
+      if (hi <= lo) return lo;
+      return lo + Number(((x * 0x2545F4914F6CDD1Dn) & M) % BigInt(hi - lo + 1));
+    };
+  }
+  function generate({ cols = 31, rows = 15, rooms = 4, seed = 1 } = {}) {
+    cols = Math.min(Math.max(cols, 8), MAX_COLS); rows = Math.min(Math.max(rows, 6), MAX_ROWS);
+    const g = Grid.blank(cols, rows), R = rng(seed), placed = [], sizes = [], want = Math.max(rooms, 1);
+    let budget = want * 48;
+    while (placed.length < want && budget > 0) {
+      budget--;
+      const w = R(6, Math.min(12, cols)), h = R(5, Math.min(8, rows));
+      let r, c;
+      if (placed.length === 0) { r = Math.floor(rows / 2); c = Math.floor(cols / 2); }
+      else {
+        const k = R(0, placed.length - 1), at = placed[k], [pw, ph] = sizes[k];
+        const top = at.row, left = at.col;
+        switch (R(0, 3)) {
+          case 0: r = top + R(0, ph - 1); c = left + pw - 1 + Math.floor((w - 1) / 2); break;
+          case 1: r = top + R(0, ph - 1); c = left - Math.floor(w / 2); break;
+          case 2: r = top + ph - 1 + Math.floor((h - 1) / 2); c = left + R(0, pw - 1); break;
+          default: r = top - Math.floor(h / 2); c = left + R(0, pw - 1);
+        }
+      }
+      if (r < 0 || c < 0) continue;
+      const d = dropAt(g, { kind: 'room', w, h }, r, c);
+      if (d) { placed.push(d); sizes.push([w, h]); }
+    }
+    return g;
+  }
+
+  // ---- renderer ----
+  const MATERIAL = { '·': 0, '░': 2500, '▒': 5000, '▓': 7500, '█': 10000 };
+  const MARKS = new Set(['.', '◆', '@', '~', '#']);
+  function classify(ch) {
+    if (ch === DOOR) return { lane: 'door', d: 0 };
+    if (SOCK.has(ch)) return { lane: 'topology', d: 10000 };
+    if (ch in MATERIAL) return { lane: 'material', d: MATERIAL[ch] };
+    if (MARKS.has(ch)) return { lane: 'mark', d: 0 };
+    return null;
+  }
+  const PALETTES = {
+    canonical: { topology: [92, 132, 196], material: [120, 104, 92], mark: [214, 160, 104], door: [236, 214, 120], background: [18, 20, 26] },
+    blueprint: { topology: [226, 240, 255], material: [150, 200, 240], mark: [42, 92, 168], door: [255, 214, 92], background: [16, 58, 120] },
+  };
+  function parsePlan(src) {
+    const rows = bodyLines(src).slice(0, MAX_ROWS).map(l => [...l].slice(0, MAX_COLS).map(classify));
+    return { rows, cols: rows.reduce((m, r) => Math.max(m, r.length), 0) };
+  }
+  function heightOf(cell) {
+    if (cell.lane === 'topology') return 3;
+    if (cell.lane === 'material') return Math.trunc(2 * cell.d / 10000);
+    return 0;
+  }
+  function render(plan, { tile_w = 16, elev = 8, pad = 8, palette = PALETTES.canonical } = {}) {
+    const cols = plan.cols, rows = plan.rows.length, half_w = Math.trunc(tile_w / 2), half_h = Math.trunc(half_w / 2);
+    const lift = 3 * elev;
+    const width = Math.max(1, (cols + rows) * half_w + 2 * pad), height = Math.max(1, (cols + rows) * half_h + lift + 2 * pad);
+    const ox = rows * half_w + pad, oy = lift + pad;
+    const data = new Uint8ClampedArray(width * height * 4), bg = palette.background;
+    for (let i = 0; i < data.length; i += 4) { data[i] = bg[0]; data[i + 1] = bg[1]; data[i + 2] = bg[2]; data[i + 3] = 255; }
+    const order = [];
+    plan.rows.forEach((row, r) => row.forEach((cell, c) => { if (cell) order.push([c + r, c, r]); }));
+    order.sort(cmp);
+    const corner = (cx, cz, cy) => [(ox + (cx - cz) * half_w) * 3, (oy + (cx + cz) * half_h - cy * elev) * 3];
+    const inside = (q, px, py) => {
+      let neg = false, pos = false;
+      for (let i = 0; i < 4; i++) {
+        const [ax, ay] = q[i], [bx, by] = q[(i + 1) % 4], cr = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+        if (cr < 0) neg = true; if (cr > 0) pos = true;
+      }
+      return !(neg && pos);
+    };
+    for (const [, c, r] of order) {
+      const cell = plan.rows[r][c], h = heightOf(cell), ink = palette[cell.lane];
+      for (const [face, shade] of [['L', 4200], ['T', 10000], ['R', 6600]]) {
+        if (h === 0 && face !== 'T') continue;
+        const cs = face === 'T' ? [[c, r, h], [c + 1, r, h], [c + 1, r + 1, h], [c, r + 1, h]]
+          : face === 'R' ? [[c + 1, r, h], [c + 1, r + 1, h], [c + 1, r + 1, 0], [c + 1, r, 0]]
+          : [[c, r + 1, h], [c + 1, r + 1, h], [c + 1, r + 1, 0], [c, r + 1, 0]];
+        const q = cs.map(([x, z, y]) => corner(x, z, y));
+        const xs = q.map(p => p[0]), ys = q.map(p => p[1]);
+        const fill = ink.map(v => Math.trunc(v * shade / 10000));
+        const py0 = Math.max(Math.floor(Math.min(...ys) / 3), 0), py1 = Math.min(Math.floor(Math.max(...ys) / 3) + 1, height);
+        const px0 = Math.max(Math.floor(Math.min(...xs) / 3), 0), px1 = Math.min(Math.floor(Math.max(...xs) / 3) + 1, width);
+        for (let py = py0; py < py1; py++) for (let px = px0; px < px1; px++) {
+          const cx = px * 3 + 1, cy = py * 3 + 1; let cov = 0;
+          for (let sy = -1; sy <= 1; sy++) for (let sx = -1; sx <= 1; sx++) if (inside(q, cx + sx, cy + sy)) cov++;
+          if (!cov) continue;
+          const at = (py * width + px) * 4;
+          for (let k = 0; k < 3; k++) data[at + k] = Math.trunc((data[at + k] * (9 - cov) + fill[k] * cov) / 9);
+        }
+      }
+    }
+    return { width, height, data };
+  }
+
+  return { Grid, check, fix, autotile, dropAt, landing, generate, parsePlan, render, PALETTES, wallSockets, across, DOOR, MAX_COLS, MAX_ROWS };
+})();
+/* CORE-END */
+
+// ---------------- editor UI ----------------
+(() => {
+  if (typeof document === 'undefined') return;
+  const $ = id => document.getElementById(id);
+  const EXAMPLE = `┌─────────┬─────────┬─────────┐
+│.........│.........│.........│
+│.........│.........│.........│
+│.........│.........│.........│
+│.........│.........│.........│
+├────+────┴────+────┴────+────┤
+│.............................│
+│.............................│
+│.............................│
+│...................▓▓▓▓▓▓▓▓..│
+│.............................│
+│...................▓▓▓▓▓▓▓▓▓▓│
+│.............................│
+│.............................│
+└──────+──────────────────────┘
+`;
+  const KEY = 'patex-editor-v1';
+  let g, hover = null, flash = null, undo = [], redo = [], note = 'Example: two-bedroom plan';
+  try { const saved = localStorage.getItem(KEY); if (saved) { g = P.Grid.parse(saved); note = 'Restored your last plan'; } } catch (e) {}
+  if (!g || !g.rows) g = P.Grid.parse(EXAMPLE);
+  sheetTo(+$('cols').value, +$('rows').value, true);
+
+  const plan = $('plan'), pctx = plan.getContext('2d'), iso = $('iso'), ictx = iso.getContext('2d');
+  const tok = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  function sheetTo(cols, rows, growOnly) {
+    cols = Math.min(Math.max(cols | 0, 8), P.MAX_COLS); rows = Math.min(Math.max(rows | 0, 6), P.MAX_ROWS);
+    if (growOnly) { g.grow(cols, rows); }
+    else { const n = P.Grid.blank(cols, rows); for (let r = 0; r < Math.min(rows, g.rows); r++) for (let c = 0; c < Math.min(cols, g.cols); c++) n.set(r, c, g.get(r, c)); g = n; }
+    $('cols').value = g.cols; $('rows').value = g.rows;
+  }
+  function snapshot() { undo.push(g.toText() + '\u0000' + g.cols + 'x' + g.rows); if (undo.length > 200) undo.shift(); redo = []; }
+  function load(s) { const [t, size] = s.split('\u0000'); const [c, r] = size.split('x').map(Number); g = P.Grid.parse(t); g.grow(c, r); $('cols').value = g.cols; $('rows').value = g.rows; }
+  function save() { try { localStorage.setItem(KEY, g.toText()); } catch (e) {} }
+
+  function tool() {
+    const t = document.querySelector('input[name=tool]:checked').value;
+    if (t === 'room') return { kind: 'room', w: +$('roomW').value | 0, h: +$('roomH').value | 0 };
+    if (t === 'counter') return { kind: 'fill', w: +$('fillW').value | 0, h: +$('fillH').value | 0, ch: '▓' };
+    if (t === 'pillar') return { kind: 'fill', w: 1, h: 1, ch: '█' };
+    if (t === 'anchor') return { kind: 'fill', w: 1, h: 1, ch: '@' };
+    return { kind: t };
+  }
+
+  // ---- layout of the plan canvas ----
+  let cell = 16, dpr = 1;
+  function sizePlan() {
+    dpr = window.devicePixelRatio || 1;
+    const avail = $('planWrap').clientWidth - 24;
+    cell = Math.max(8, Math.min(28, Math.floor(avail / g.cols)));
+    plan.style.width = cell * g.cols + 'px'; plan.style.height = cell * g.rows + 'px';
+    plan.width = Math.round(cell * g.cols * dpr); plan.height = Math.round(cell * g.rows * dpr);
+  }
+  function cellAt(ev) {
+    const b = plan.getBoundingClientRect();
+    const c = Math.floor((ev.clientX - b.left) / cell), r = Math.floor((ev.clientY - b.top) / cell);
+    return (r >= 0 && c >= 0 && r < g.rows && c < g.cols) ? [r, c] : null;
+  }
+
+  function drawPlan(view, ghost) {
+    const ink = tok('--ink'), muted = tok('--muted'), rule = tok('--rule'), accent = tok('--accent'), warn = tok('--warn'), fillc = tok('--fill');
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    pctx.clearRect(0, 0, plan.width, plan.height);
+    pctx.strokeStyle = rule; pctx.lineWidth = 1; pctx.globalAlpha = 0.6; pctx.beginPath();
+    for (let c = 0; c <= view.cols; c++) { pctx.moveTo(c * cell + .5, 0); pctx.lineTo(c * cell + .5, view.rows * cell); }
+    for (let r = 0; r <= view.rows; r++) { pctx.moveTo(0, r * cell + .5); pctx.lineTo(view.cols * cell, r * cell + .5); }
+    pctx.stroke(); pctx.globalAlpha = 1;
+    if (ghost) {
+      pctx.fillStyle = ghost.ok ? accent : warn; pctx.globalAlpha = 0.14;
+      pctx.fillRect(ghost.col * cell, ghost.row * cell, ghost.w * cell, ghost.h * cell);
+      pctx.globalAlpha = 1; pctx.strokeStyle = ghost.ok ? accent : warn; pctx.lineWidth = 2; pctx.setLineDash(ghost.ok ? [] : [4, 3]);
+      pctx.strokeRect(ghost.col * cell + 1, ghost.row * cell + 1, ghost.w * cell - 2, ghost.h * cell - 2); pctx.setLineDash([]);
+    }
+    const m = cell / 2, lw = Math.max(1.5, cell / 9);
+    for (let r = 0; r < view.rows; r++) for (let c = 0; c < view.cols; c++) {
+      const ch = view.get(r, c), x = c * cell, y = r * cell, s = P.wallSockets(ch);
+      if (s) {
+        // Each socket is a solid bar from the cell centre to that edge; double strokes are two thinner bars.
+        pctx.fillStyle = ink;
+        s.forEach((k, d) => {
+          if (!k) return;
+          const t = k === 2 ? lw * 0.6 : lw, offs = k === 2 ? [-lw * 0.8, lw * 0.8] : [0];
+          for (const o of offs) {
+            if (d % 2) { const x0 = d === 1 ? x + m - t / 2 : x, x1 = d === 1 ? x + cell : x + m + t / 2; pctx.fillRect(x0, y + m + o - t / 2, x1 - x0, t); }
+            else { const y0 = d === 2 ? y + m - t / 2 : y, y1 = d === 2 ? y + cell : y + m + t / 2; pctx.fillRect(x + m + o - t / 2, y0, t, y1 - y0); }
+          }
+        });
+      } else if (ch === P.DOOR) {
+        const ac = P.across(view, r, c), horiz = ac && ac[0][1] === c;
+        pctx.fillStyle = accent;
+        if (horiz) pctx.fillRect(x, y + m - lw, cell, lw * 2); else pctx.fillRect(x + m - lw, y, lw * 2, cell);
+        pctx.strokeStyle = accent; pctx.lineWidth = 1.2; pctx.beginPath();
+        if (horiz) pctx.arc(x, y + m, cell * 0.9, 0, Math.PI / 2); else pctx.arc(x + m, y, cell * 0.9, 0, Math.PI / 2);
+        pctx.stroke();
+      } else if (ch === '.') {
+        pctx.fillStyle = muted; pctx.fillRect(x + m - 1, y + m - 1, 2, 2);
+      } else if (ch === '▓' || ch === '█' || ch === '▒' || ch === '░') {
+        pctx.fillStyle = fillc; pctx.globalAlpha = { '█': 1, '▓': .75, '▒': .5, '░': .3 }[ch];
+        pctx.fillRect(x + 1, y + 1, cell - 2, cell - 2); pctx.globalAlpha = 1;
+      } else if (ch !== ' ') {
+        pctx.fillStyle = ch === '@' ? accent : ink; pctx.font = `${Math.round(cell * 0.75)}px ${tok('--font-plan')}`;
+        pctx.textAlign = 'center'; pctx.textBaseline = 'middle'; pctx.fillText(ch, x + m, y + m + 1);
+      }
+    }
+    if (flash) {
+      pctx.strokeStyle = warn; pctx.lineWidth = 2.5;
+      pctx.beginPath(); pctx.arc(flash[1] * cell + m, flash[0] * cell + m, cell * 0.85, 0, Math.PI * 2); pctx.stroke();
+    }
+  }
+
+  function drawIso(view) {
+    const wrap = iso.parentElement, avail = (wrap.clientWidth - 24) * (window.devicePixelRatio || 1);
+    const half = Math.max(2, Math.min(24, Math.floor((avail - 16) / (view.cols + view.rows))));
+    const pal = P.PALETTES[$('style').value];
+    const img = P.render(P.parsePlan(view.toText()), { tile_w: half * 2, elev: half, pad: 8, palette: pal });
+    iso.width = img.width; iso.height = img.height;
+    const r = window.devicePixelRatio || 1;
+    iso.style.width = img.width / r + 'px'; iso.style.height = img.height / r + 'px';
+    ictx.putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+  }
+
+  function report() {
+    const rep = P.check(g), v = $('verdict'), list = $('issues');
+    v.className = 'pill ' + (rep.valid ? 'ok' : 'bad');
+    v.textContent = rep.valid ? `Valid · ${rep.rooms} room${rep.rooms === 1 ? '' : 's'}` : `${rep.issues.length} issue${rep.issues.length === 1 ? '' : 's'} · ${rep.rooms} room${rep.rooms === 1 ? '' : 's'}`;
+    list.replaceChildren(...rep.issues.map(i => {
+      const li = document.createElement('li'), b = document.createElement('button');
+      b.textContent = i.text; b.onclick = () => { flash = [i.row, i.col]; paint(); };
+      li.append(b); return li;
+    }));
+  }
+
+  let raf = 0;
+  function paint() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      let view = g, ghost = null;
+      if (hover) {
+        const t = tool();
+        if (t.kind === 'room' || t.kind === 'fill') {
+          const land = P.landing(g, t, hover[0], hover[1]);
+          if (land) { view = g.clone(); P.dropAt(view, t, hover[0], hover[1]); ghost = { ok: true, row: land.row, col: land.col, w: t.w, h: t.h }; }
+          else ghost = { ok: false, row: hover[0] - Math.trunc((t.h - 1) / 2), col: hover[1] - Math.trunc((t.w - 1) / 2), w: t.w, h: t.h };
+        }
+      }
+      drawPlan(view, ghost); drawIso(view);
+    });
+  }
+
+  function status(extra) {
+    const at = hover ? `<b>row ${hover[0]} · col ${hover[1]}</b>` : '<b>—</b>';
+    $('status').innerHTML = `${at}<span>${extra || note}</span>`;
+  }
+
+  function commit(msg) {
+    note = msg; flash = null; save(); report(); status();
+    const ta = $('text'); if (document.activeElement !== ta) ta.value = g.toText();
+    paint();
+  }
+
+  // ---- events ----
+  plan.addEventListener('pointermove', ev => {
+    const at = cellAt(ev); if (String(at) === String(hover)) return;
+    hover = at;
+    let extra = null;
+    if (at) {
+      const t = tool();
+      if (t.kind === 'room' || t.kind === 'fill') {
+        const land = P.landing(g, t, at[0], at[1]);
+        extra = !land ? 'No space here' : t.kind === 'room' ? (land.shared ? `Snaps to share ${land.shared} wall cells` : 'Free-standing room') : 'Lands on floor';
+      } else if (t.kind === 'door') extra = P.across(g, at[0], at[1]) && P.wallSockets(g.get(at[0], at[1])) ? 'Click to cut a door here' : g.get(at[0], at[1]) === P.DOOR ? 'Click to wall up this door' : 'Doors go in a straight wall';
+      else extra = 'Click to erase this cell';
+    }
+    status(extra); paint();
+  });
+  plan.addEventListener('pointerleave', () => { hover = null; status(); paint(); });
+  plan.addEventListener('pointerdown', ev => {
+    const at = cellAt(ev); if (!at) return;
+    const [r, c] = at, t = tool();
+    if (t.kind === 'room' || t.kind === 'fill') {
+      if (!P.landing(g, t, r, c)) { status('No space here'); return; }
+      snapshot(); const d = P.dropAt(g, t, r, c);
+      const f = d.fixed;
+      return commit(t.kind === 'room' ? `Room dropped${d.shared ? `, sharing ${d.shared} wall cells` : ''}; ${f.doors_added} door${f.doors_added === 1 ? '' : 's'} cut` : 'Placed');
+    }
+    const ch = g.get(r, c);
+    if (t.kind === 'door') {
+      if (ch === P.DOOR) { snapshot(); g.set(r, c, '─'); P.autotile(g); return commit('Door walled up'); }
+      if (P.wallSockets(ch) && P.across(g, r, c)) { snapshot(); g.set(r, c, P.DOOR); P.autotile(g); return commit('Door cut'); }
+      return status('Doors go in a straight wall');
+    }
+    if (ch === ' ') return;
+    snapshot();
+    if (ch === P.DOOR) { g.set(r, c, '─'); P.autotile(g); }
+    else if (P.wallSockets(ch) || ch === '.') { g.set(r, c, ' '); P.autotile(g); }
+    else g.set(r, c, '.');
+    commit('Erased. Use Fix plan if the check complains');
+  });
+
+  $('fixBtn').onclick = () => { snapshot(); const f = P.fix(g); commit(`Fixed: ${f.gaps_bridged} gaps bridged, ${f.walls_redrawn} walls redrawn, ${f.doors_added} doors cut`); };
+  $('gen').onclick = () => { snapshot(); const seed = Math.max(0, +$('seed').value | 0); g = P.generate({ cols: +$('cols').value, rows: +$('rows').value, rooms: 5, seed }); sizePlan(); commit(`Random plan, seed ${seed}`); };
+  $('clear').onclick = () => { snapshot(); g = P.Grid.blank(g.cols, g.rows); commit('Cleared'); };
+  $('undo').onclick = () => { if (!undo.length) return; redo.push(g.toText() + '\u0000' + g.cols + 'x' + g.rows); load(undo.pop()); sizePlan(); commit('Undone'); };
+  $('redo').onclick = () => { if (!redo.length) return; undo.push(g.toText() + '\u0000' + g.cols + 'x' + g.rows); load(redo.pop()); sizePlan(); commit('Redone'); };
+  for (const id of ['cols', 'rows']) $(id).addEventListener('change', () => { snapshot(); sheetTo(+$('cols').value, +$('rows').value, false); sizePlan(); commit(`Sheet ${g.cols} × ${g.rows}`); });
+  $('style').onchange = paint;
+  document.querySelectorAll('input[name=tool], #roomW, #roomH, #fillW, #fillH').forEach(el => el.addEventListener('input', () => paint()));
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(g.toText()); note = 'Plan text copied'; }
+    catch (e) { const ta = $('text'); ta.focus(); ta.select(); note = 'Selected: press Ctrl+C to copy'; }
+    status();
+  };
+  let typing = 0;
+  $('text').addEventListener('input', () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => {
+      snapshot(); const t = $('text').value; g = P.Grid.parse(t || ' ');
+      g.grow(8, 6); $('cols').value = g.cols; $('rows').value = g.rows; sizePlan(); commit('Plan read from text');
+    }, 250);
+  });
+  window.addEventListener('keydown', ev => {
+    if (ev.target.matches('input, textarea')) return;
+    const k = ev.key.toLowerCase();
+    if ((ev.ctrlKey || ev.metaKey) && k === 'z') { ev.preventDefault(); (ev.shiftKey ? $('redo') : $('undo')).click(); }
+    else if ((ev.ctrlKey || ev.metaKey) && k === 'y') { ev.preventDefault(); $('redo').click(); }
+    else if (k === 'r') { const w = $('roomW').value; $('roomW').value = $('roomH').value; $('roomH').value = w; paint(); }
+  });
+  // Saving a file works when this page is opened on its own; inside an embedded viewer it is blocked, so the button stays hidden there.
+  if (window.self === window.top) {
+    $('png').hidden = false;
+    $('png').onclick = () => iso.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'plan.png'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); });
+  }
+  new ResizeObserver(() => { sizePlan(); paint(); }).observe($('planWrap'));
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint);
+  sizePlan(); commit(note);
+})();
+</script>
+</body>
+</html>
